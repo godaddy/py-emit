@@ -1,0 +1,7 @@
+include README.md
+include MANIFEST.in
+include Makefile
+recursive-include emit *
+recursive-exclude * .conf*
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
