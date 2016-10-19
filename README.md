@@ -1,7 +1,5 @@
 # Emit Python Client
 
-  [Emit System] | [Event Specification]
-
   > ```json
   > {
   >   "tid": "84546fec-0661-41ac-bedb-3dff65903a5d",
