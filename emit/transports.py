@@ -292,6 +292,9 @@ class ThreadedWorker(Worker, threading.Thread):
                     else:
                         process(self.t.max_work_time)
                     self.check_flush()
+                if not self.q.empty():
+                    log('ThreadedWorker.run - worker exiting with {}'
+                        ' items stil in the queue'.format(len(self.q)))
             finally:
                 if self._stopping_timer:
                     self._stopping_timer.cancel()
