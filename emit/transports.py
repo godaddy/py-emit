@@ -314,8 +314,13 @@ class ThreadedWorker(Worker, threading.Thread):
                             'worker belonging to this transport, halting')
                         return
             if isinstance(t, threading._MainThread) and not t.is_alive():
-                log('ThreadedWorker.check_orphaned - main thread has died')
+                stop_seconds = self.t.max_stopping_time.total_seconds()
+                msg = 'ThreadedWorker.check_orphaned - main thread has ' \
+                      'died, flushing queue for up to {} seconds'
+                log(msg.format(stop_seconds))
                 self._stopping.set()
+                self._stopping_timer = threading.Timer(
+                    stop_seconds, self._halting.set)
                 return
 
     def check_flush(self):
