@@ -8,6 +8,7 @@ setup(
     package_data={'': ['README.md', '*Makefile*', '*static/*']},
     include_package_data=True,
     install_requires=[
+        'requests',
         'pika>=0.10.0',
         'python-dateutil>=2.5.3'],
     url='https://github.com/godaddy/py-emit')

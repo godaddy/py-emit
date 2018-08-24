@@ -1,6 +1,7 @@
 import sys
 import os
 import pika
+import requests
 from datetime import datetime
 from .globals import log, conf
 from pika.exceptions import (
@@ -9,8 +10,8 @@ from .utils import _is_string, _timeout_seconds
 
 
 Adapters = [
-    'Adapter', 'MultiAdapter', 'ListAdapter', 'FileAdapter',
-    'StdoutAdapter', 'StderrAdapter', 'AmqpAdapter']
+    'Adapter', 'HttpAdapter', 'MultiAdapter', 'ListAdapter', 'FileAdapter',
+    'StdoutAdapter', 'StderrAdapter', 'AmqpAdapter', 'HttpAdapter']
 
 
 __all__ = Adapters + [
@@ -65,6 +66,8 @@ class Adapter(object):
                 return AmqpAdapter.from_url(url, *args, **kwargs)
             if url.startswith('list'):
                 return ListAdapter(*args, **kwargs)
+            if url.startswith('http'):
+                return HttpAdapter.from_url(url, *args, **kwargs)
             if url == 'std://out':
                 return StdoutAdapter(*args, **kwargs)
             if url == 'std://err':
@@ -294,6 +297,61 @@ class AmqpAdapter(Adapter):
         except AMQPError as e:
             raise AdapterEmitError(e)
         except Exception as e:
+            raise AdapterEmitPermanentError(e)
+
+
+class HttpAdapter(Adapter):
+    permanent = (ValueError, Exception)
+    transient = (requests.Timeout, requests.RequestException)
+    reconnect = (requests.ConnectionError, requests.HTTPError)
+
+    @classmethod
+    def from_url(cls, url):
+        return cls(url)
+
+    def __init__(self, url):
+        super(HttpAdapter, self).__init__()
+        self.url = url
+        self.session = None
+
+    def __call__(self):
+        return HttpAdapter(self.url)
+
+    def _open(self):
+        if self.session is not None:
+            return
+        try:
+            self.session = requests.Session()
+            self.session.headers.update({'User-Agent': 'emit-v0.4.0'})
+        except Exception as e:
+            fmt = 'HttpAdapter._open - unable to open session to url: {}'
+            log.exception(fmt.format(self.url))
+            raise AdapterClosedError(e)
+        return self
+
+    def _close(self):
+        try:
+            self.session.close()
+        finally:
+            self.session = None
+
+    def _flush(self, timeout):
+        pass
+
+    def _emit(self, json):
+        if not self.session:
+            raise AdapterClosedError
+        try:
+            res = self.session.post(self.url, data=json)
+            res.raise_for_status()
+        except HttpAdapter.transient as e:
+            log.exception('HttpAdapter._emit - http transient exception')
+            raise AdapterEmitError(e)
+        except HttpAdapter.reconnect as e:
+            log.exception('HttpAdapter._emit - http reconnect exception')
+            raise AdapterClosedError(e)
+        except HttpAdapter.permanent as e:
+            log.exception('HttpAdapter._emit - http permanent exception')
             raise AdapterEmitPermanentError(e)
 
 
