@@ -110,6 +110,7 @@ def pytest_runtest_setup(item):
 
 def pytest_addoption(parser):
     parser.addoption("--amqp_url", action="store", default='')
+    parser.addoption("--http_url", action="store", default='')
 
 
 # http://pytest.org/latest/writing_plugins.html#conftest

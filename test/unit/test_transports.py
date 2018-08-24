@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from emit import queue
 from emit.decorators import defer, delay
 from emit.transports import (
-    Transport, Worker, ThreadedWorker, WorkerError, WorkerStoppedError)
+    Transport, Worker, Group, ThreadedWorker, WorkerError, WorkerStoppedError)
 from emit.queue import Queue
 from emit.utils import Called
 from emit.adapters import (
@@ -888,3 +888,245 @@ class TestTransport(TestCase):
         expect_str += ' backoff=Backoff(max_attempts=15)),'
         expect_str += ' adapter=ListAdapter([{'
         assert t_str.startswith(expect_str)
+
+
+def assert_group_stopped(g, tps):
+    assert not g.running, 'group should not be running'
+    for tp in tps:
+        assert_transport(tp)
+        assert tp in g.transports, \
+            'each transport should be added to Group'
+        assert not tp.running, 'transport should not be running'
+
+
+def assert_group_running(g, tps):
+    assert g.running, 'group should be running'
+    for tp in tps:
+        assert_transport(tp)
+        assert tp in g.transports, \
+            'each transport should be added to Group'
+        assert tp.running, 'transport should be running'
+
+
+def assert_group_emit(g, tps):
+    event_json = tjson()
+    g.emit(event_json)
+    for tp in tps:
+        chk(tp, event_json, False)
+
+
+@pytest.mark.transport_group
+class TestTransportGroup(TestCase):
+    transport_class = Transport
+    worker_class = Worker
+
+    class TAdapter(ListAdapter):
+        pass
+
+    class TWorker(Worker):
+        pass
+
+    class TQueue(Queue):
+        pass
+
+    def test__init__(self):
+        tps = [Transport(), Transport(), Transport()]
+        g = Group(*tps)
+        assert_group_stopped(g, tps)
+
+    def test_running(self):
+        # test multiple transport counts
+        for n in range(1, 4):
+            tps = [Transport() for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+
+            g.start()  # multiple calls to start are okay
+            assert_group_running(g, tps)
+
+            g.stop()  # multiple calls to stop are okay
+            assert_group_stopped(g, tps)
+
+    def test_stop_when_transport_worker_is_none(self):
+        for n in range(1, 4):
+            tps = [Transport() for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+
+            for tp in tps:
+                tp.worker = None
+
+            g.stop()
+            assert_group_stopped(g, tps)
+
+    def test_stop_when_transport_stopped(self):
+        for n in range(1, 4):
+            tps = [Transport() for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+
+            for tp in tps:
+                tp.stop()
+
+            g.stop()
+            assert_group_stopped(g, tps)
+
+    def test_halt_group_doesnt_do_work(self):
+        for n in range(1, 4):
+            tps = [Transport(worker_class=Worker) for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+
+            for tp in tps:
+                expect_json = tjson()
+                tp.queue.put(expect_json, True, None)
+                assert len(tp.queue) == 1
+
+            g.halt()
+            assert_group_stopped(g, tps)
+            for tp in tps:
+                assert len(tp.queue) == 1, 'exp no work on call to halt'
+
+    def test_halt_group_when_stopped(self):
+        for n in range(1, 4):
+            tps = [Transport(worker_class=Worker) for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.halt()
+            assert_group_stopped(g, tps)
+
+    def test_halt_when_transport_worker_is_none(self):
+        for n in range(1, 4):
+            tps = [Transport() for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+
+            for tp in tps:
+                tp.worker = None
+
+            g.halt()
+            assert_group_stopped(g, tps)
+
+    def test_halt_when_transport_stopped(self):
+        for n in range(1, 4):
+            tps = [Transport() for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+
+            for tp in tps:
+                tp.stop()
+
+            g.halt()
+            assert_group_stopped(g, tps)
+
+    def test_emit(self):
+        for n in range(1, 4):
+            tps = [
+                Transport(worker_class=Worker, adapter_class=ListAdapter) \
+                    for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+            assert_group_emit(g, tps)
+
+            g.stop()
+            assert_group_stopped(g, tps)
+
+    def test_emit_autostart(self):
+        for n in range(1, 4):
+            tps = [
+                Transport(worker_class=Worker, adapter_class=ListAdapter) \
+                    for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+            assert_group_emit(g, tps)
+
+            g.stop()
+            assert_group_stopped(g, tps)
+
+    def test_emit_underlying_stopped(self):
+        for n in range(1, 4):
+            tps = [
+                Transport(worker_class=Worker, adapter_class=ListAdapter) \
+                    for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+            assert_group_emit(g, tps)
+            assert_group_running(g, tps)
+
+            assert all(tp.running for tp in tps)
+            assert g.running, 'should be running'
+            for tp in tps:
+                tp.stop()
+
+            assert all(not tp.running for tp in tps)
+            assert not g.running, 'should be stopped'
+
+    def test_emit_flush(self):
+        for n in range(1, 4):
+            tps = [
+                Transport(worker_class=Worker, adapter_class=ListAdapter) \
+                    for i in range(n)]
+
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            g.start()
+            assert_group_running(g, tps)
+
+            for tp in tps:
+                expect_json = tjson()
+                tp.queue.put(expect_json, True, None)
+                assert len(tp.queue) == 1
+
+            g.flush()
+            for tp in tps:
+                assert len(tp.queue) == 0, 'exp empty queue after flush'
+
+    def test_ctx_manager(self):
+        for n in range(1, 4):
+            tps = [
+                Transport(worker_class=Worker, adapter_class=ListAdapter) \
+                    for i in range(n)]
+            g = Group(*tps)
+            assert_group_stopped(g, tps)
+
+            with g:
+                assert_group_running(g, tps)
+            assert_group_stopped(g, tps)
+
+    def test__repr__(self, t):
+        g = Group(t)
+        g.start()
+        assert_group_running(g, [t])
+
+        g_str = str(g)
+        print g_str
+
+        expect_str = 'Group(running=True, transports=[Transport('
+        expect_str += 'running=True,'
+        expect_str += ' queue=Queue(size=0,'
+        expect_str += ' backoff=Backoff(max_attempts=15)),'
+        expect_str += ' adapter=ListAdapter('
+        assert g_str.startswith(expect_str)

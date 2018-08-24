@@ -6,7 +6,7 @@ from .globals import log, ConfigDescriptor
 from .adapters import (AdapterError, AdapterClosedError, AdapterEmitError, AdapterEmitPermanentError)
 
 
-Transports = ['Transport']
+Transports = ['Transport', 'Group']
 Workers = ['Worker', 'ThreadedWorker']
 
 
@@ -66,6 +66,11 @@ class Worker(object):
         self.reset()
         self.work(timeout)
         self.flush(self.t.max_flush_time)
+        self.adapter.close()
+
+    def halt(self):
+        """Halts worker immediately without flushing any items."""
+        self.reset()
         self.adapter.close()
 
     def reset(self):
@@ -433,7 +438,7 @@ class Transport(object):
             if self.worker is None:
                 return
             try:
-                self.worker.stop(-1)
+                self.worker.halt()
             except WorkerStoppedError:
                 pass
             finally:
@@ -447,13 +452,14 @@ class Transport(object):
                 return
             try:
                 timeout = _timeout_delta(timeout, self.max_flush_time)
+                self.worker.work(timeout)
                 self.worker.flush(timeout)
             except WorkerStoppedError:
                 self.halt()
 
-    def emit(self, event_json, timeout=None):
+    def emit(self, item, timeout=None):
         """Places a message into the queue then notifies the worker."""
-        self.queue.put(event_json, True, None)
+        self.queue.put(item, True, timeout)
 
         if self.worker is None:
             log('Transport.emit - starting worker')
@@ -463,3 +469,56 @@ class Transport(object):
             self.worker.work(timeout)
         except WorkerStoppedError:
             self.halt()
+
+
+class Group(object):
+    def __init__(self, *transports):
+        self.transports = list(transports)
+        self.lock = threading.RLock()
+
+    def __repr__(self):
+        return '{}(running={}, transports={})'.format(
+            self.__class__.__name__, self.running, self.transports)
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, exc_type, exc_value, tb):
+        self.stop()
+
+    @property
+    def running(self):
+        """Returns True if all transports are running and at least one exists,
+        or False otherwise."""
+        return len(self.transports) > 0 and \
+            all(tp.running for tp in self.transports)
+
+    def start(self):
+        """Starts all underlying transports."""
+        with self.lock:
+            for tp in self.transports:
+                tp.start()
+
+    def stop(self, timeout=None):
+        """Stops all underlying transports."""
+        with self.lock:
+            for tp in self.transports:
+                tp.stop(timeout)
+
+    def halt(self):
+        """Halts all underlying transports."""
+        with self.lock:
+            for tp in self.transports:
+                tp.halt()
+
+    def flush(self, timeout=None):
+        """Flushes all underlying transports."""
+        with self.lock:
+            for tp in self.transports:
+                tp.flush(timeout)
+
+    def emit(self, item, timeout=None):
+        if not self.running:
+            self.start()
+        for tp in self.transports:
+            tp.emit(item, timeout)

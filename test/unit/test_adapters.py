@@ -6,7 +6,7 @@ from emit import adapters
 from StringIO import StringIO
 from emit.decorators import unreliable, slow
 from emit.adapters import (
-    Adapter, MultiAdapter, ListAdapter, RaisingAdapter,
+    Adapter, MultiAdapter, HttpAdapter, ListAdapter, RaisingAdapter,
     FileAdapter, StdoutAdapter, StderrAdapter, AmqpAdapter,
     AdapterError, AdapterEmitError, AdapterClosedError, AdapterEmitPermanentError)
 from .test_decorators import assert_unreliable
@@ -17,6 +17,11 @@ try:
     _amqp_url = pytest.config.getvalue('amqp_url')
 except:
     _amqp_url = None
+
+try:
+    _http_url = pytest.config.getvalue('http_url')
+except:
+    _http_url = None
 
 
 def decorate_adapter(adapter, decorators=None, methods=None):
@@ -206,6 +211,7 @@ class UnreliableTestsMixin(object):
                     pass
 
 
+@pytest.mark.adapters
 @pytest.mark.adapters_errors_classes
 class TestAdapterErrorClasses(TestCase):
 
@@ -237,6 +243,7 @@ class TestAdapterErrorClasses(TestCase):
         assert isinstance(e, AdapterEmitError)
 
 
+@pytest.mark.adapters
 @pytest.mark.base_adapter
 class TestAdapter(AdapterTestsMixin, UnreliableTestsMixin, TestCase):
     adapter_class = Adapter
@@ -248,6 +255,8 @@ class TestAdapter(AdapterTestsMixin, UnreliableTestsMixin, TestCase):
             (StderrAdapter, ['std://err']),
             (AmqpAdapter, ['amqp://user:pass@localhost:5379']),
             (AmqpAdapter, ['amqps://user:pass@localhost:5379']),
+            (HttpAdapter, ['http://user:pass@localhost:5000']),
+            (HttpAdapter, ['https://user:pass@localhost:5000']),
             (Adapter, ['noop', 'noop://']),
             (Adapter, ['default', 'default://'])]
 
@@ -280,6 +289,7 @@ class TestAdapter(AdapterTestsMixin, UnreliableTestsMixin, TestCase):
                 adapter.emit(error)
 
 
+@pytest.mark.adapters
 @pytest.mark.list_adapter
 class TestListAdapter(TestCase):
 
@@ -344,6 +354,7 @@ class TestListAdapter(TestCase):
                 assert expect_line in adapter_str
 
 
+@pytest.mark.adapters
 @pytest.mark.multi_adapter
 class TestMultiAdapter(AdapterTestsMixin, UnreliableTestsMixin, TestCase):
     @staticmethod
@@ -457,6 +468,7 @@ class TestMultiAdapter(AdapterTestsMixin, UnreliableTestsMixin, TestCase):
             assert adapter.closed is True
 
 
+@pytest.mark.adapters
 @pytest.mark.file_adapter
 class TestFileAdapter(AdapterTestsMixin, UnreliableTestsMixin, TestCase):
     adapter_class = FileAdapter
@@ -503,6 +515,7 @@ class TestFileAdapter(AdapterTestsMixin, UnreliableTestsMixin, TestCase):
             adapters.os.fsync = os.fsync
 
 
+@pytest.mark.adapters
 @pytest.mark.stdout_adapter
 class TestStdoutAdapter(TestCase):
 
@@ -510,6 +523,7 @@ class TestStdoutAdapter(TestCase):
         assert StdoutAdapter._file == sys.stdout
 
 
+@pytest.mark.adapters
 @pytest.mark.stderr_adapter
 class TestStderrAdapter(TestCase):
 
@@ -519,6 +533,7 @@ class TestStderrAdapter(TestCase):
 
 @pytest.mark.skipif(not _amqp_url, reason='--amqp_url was not specified')
 @pytest.mark.slow
+@pytest.mark.adapters
 @pytest.mark.amqp_adapter
 class TestAmqpAdapter(AdapterTestsMixin, TestCase):
     @staticmethod
@@ -725,7 +740,61 @@ class TestAmqpAdapter(AdapterTestsMixin, TestCase):
         assert_amqp_closed(adapter)
 
 
-@pytest.mark.multi_adapter
+@pytest.mark.skipif(not _http_url, reason='--http_url was not specified')
+@pytest.mark.slow
+@pytest.mark.adapters
+@pytest.mark.http_adapter
+class TestHttpAdapter(AdapterTestsMixin, TestCase):
+    @staticmethod
+    def adapter_factory():
+        return HttpAdapter(_http_url)
+    adapter_class = adapter_factory
+
+    def test_init(self):
+        adapter = self.adapter_factory()
+        assert adapter.session is None, 'exp closed session for new adapter'
+
+    def test__call__(self):
+        adapter = self.adapter_factory()
+        cloned = adapter()
+        assert not (cloned is None)
+        assert not (cloned == adapter)
+        assert cloned.session is None, 'exp closed session for new adapter'
+        assert adapter.url == cloned.url, 'exp same url'
+        assert adapter.session == cloned.session, 'exp same session val'
+
+    def test_emit(self):
+        event = tevent()
+        event_json = event.json
+        adapter = self.adapter_factory()
+        assert adapter.session is None
+
+        adapter.open()
+        assert adapter.session is not None
+
+        assert adapter.emit(event_json) is None
+        assert adapter.session is not None
+
+    def test_emit_failure(self):
+        event = tevent()
+        event_json = event.json
+        adapter = HttpAdapter.from_url(_http_url+"/invalid/url")
+        adapter.open()
+        with pytest.raises(AdapterEmitError) as excinfo:
+            assert adapter.emit(event_json) is None
+        assert isinstance(excinfo.value, AdapterError)
+
+    def test_emit_closed(self):
+        event = tevent()
+        event_json = event.json
+        adapter = self.adapter_factory()
+        with pytest.raises(AdapterClosedError) as excinfo:
+            assert adapter.emit(event_json) is None
+        assert isinstance(excinfo.value, AdapterError)
+
+
+@pytest.mark.adapters
+@pytest.mark.raising_adapter
 class TestRaisingAdapter(TestCase):
 
     def test_raises(self):

@@ -362,7 +362,7 @@ class TestEmitterMethods(EmitterTestCase):
             assert e.component == 'emitter'
             assert e.operation == 'ping'
 
-    def test_emit_debug_false(self):
+    def test_emit_throws(self):
         restore = conf.debug
 
         try:
@@ -372,17 +372,6 @@ class TestEmitterMethods(EmitterTestCase):
             with pytest.raises(ValueError) as excinfo:
                 emitter.emit('foo')
             assert '`operation` must not be empty' == str(excinfo.value)
-        finally:
-            conf.debug = restore
-
-    def test_emit_debug_true(self):
-        restore = conf.debug
-
-        try:
-            conf.debug = False
-            emitter = Emitter()
-            emitter.callbacks = 'str'
-            emitter.emit('foo')
         finally:
             conf.debug = restore
 

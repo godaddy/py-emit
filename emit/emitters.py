@@ -122,21 +122,14 @@ class Emitter(object):
         """Emit an event. It will use the current event stack for the events
         context. It returns a context manager which will use the emitted event
         as a base for this event stack as well as emit an 'enter' and 'exit'
-        event. This hides exceptions unless debug mode is enabled."""
-        try:
-            event = self.event_stack | self.event_class(*args, **kwargs)
-            event.validate()
+        event."""
+        event = self.event_stack | self.event_class(*args, **kwargs)
+        event.validate()
 
-            if len(self.callbacks):
-                map(lambda f: f(event), self.callbacks)
-            self.transport.emit(event.json)
-            return self.enter(*args, **kwargs)
-
-        except Exception:
-            if conf.debug:
-                raise
-            log.exception('`emit(*{}, **{})` caught exception (set debug = True to throw)', args, kwargs)
-        return self
+        if len(self.callbacks):
+            map(lambda f: f(event), self.callbacks)
+        self.transport.emit(event.json)
+        return self.enter(*args, **kwargs)
 
     """
     Below here all methods forward / interact with the current context. For properties
